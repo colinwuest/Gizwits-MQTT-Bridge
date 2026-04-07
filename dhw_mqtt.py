@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-hot_water_mqtt.py — Gizwits  Home Assistant MQTT bridge
+dhw_mqtt.py — Gizwits  Home Assistant MQTT bridge
 
 Publishes heat pump readings via MQTT Discovery so HA auto-creates all
 entities. Also subscribes to the setpoint command topic so HA can change
