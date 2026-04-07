@@ -1,6 +1,6 @@
 # Gizwits-MQTT-Bridge
 
-Integrates a **Gizwits-based air-source heat pump water heater** (Outes/JNOD `W-HTR-A8CF`, sold under various brand names) with **Home Assistant** via MQTT Discovery.
+Integrates a **Gizwits-based air-source heat pump water heater** (Outes/JNOD `W-HTR-A8CF`, sold under various brand names) with **Home Assistant** via MQTT Discovery. Tested against Outes Aab21R1/200E. 
 
 The service polls the Gizwits cloud API every 120 seconds and publishes all sensor readings, binary states, and diagnostic data as MQTT Discovery messages so Home Assistant auto-creates every entity. It also subscribes to command topics so you can control the unit directly from HA.
 
