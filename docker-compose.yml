@@ -1,7 +1,6 @@
 services:
   hot_water:
-    build: .
-    image: hot-water-mqtt
+    image: cwuest/gizwits-mqtt-bridge:latest
     container_name: hot_water
     restart: unless-stopped
     environment:

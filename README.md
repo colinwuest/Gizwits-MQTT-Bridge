@@ -62,30 +62,41 @@ The vendor app communicates with `euapi.gizwits.com`. You need three values:
 
 ## Quick Start
 
-### 1. Clone and configure
+The image is published to Docker Hub at [`cwuest/gizwits-mqtt-bridge`](https://hub.docker.com/r/cwuest/gizwits-mqtt-bridge) and supports **linux/amd64**, **linux/arm64**, and **linux/arm/v7** (Raspberry Pi).
 
-```bash
-git clone https://github.com/colinwuest/Gizwits-MQTT-Bridge.git
-cd Gizwits-MQTT-Bridge
-```
-
-Edit `docker-compose.yml` and fill in your values:
+### 1. Create a `docker-compose.yml`
 
 ```yaml
-environment:
-  MQTT_HOST: "192.168.1.10"   # your MQTT broker
-  MQTT_PORT: "1883"
-  MQTT_USER: "myuser"
-  MQTT_PASS: "mypassword"
-  GIZWITS_TOKEN:  "your_user_token_here"
-  GIZWITS_APP_ID: "your_app_id_here"
-  GIZWITS_DID:    "your_device_id_here"
+services:
+  hot_water:
+    image: cwuest/gizwits-mqtt-bridge:latest
+    container_name: hot_water
+    restart: unless-stopped
+    environment:
+      MQTT_HOST: "192.168.1.10"   # your MQTT broker
+      MQTT_PORT: "1883"
+      MQTT_USER: "myuser"
+      MQTT_PASS: "mypassword"
+      GIZWITS_TOKEN:  "your_user_token_here"
+      GIZWITS_APP_ID: "your_app_id_here"
+      GIZWITS_DID:    "your_device_id_here"
+      DATA_DIR: "/data"
+    volumes:
+      - hot_water_data:/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+volumes:
+  hot_water_data:
 ```
 
-### 2. Build and run
+### 2. Run
 
 ```bash
-docker compose up -d --build
+docker compose up -d
 ```
 
 ### 3. Check logs
