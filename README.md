@@ -13,6 +13,7 @@ The service polls the Gizwits cloud API every 120 seconds and publishes all sens
 - **Heating mode select** — Auto, Eco, Fast Heat, Sleep, Holiday
 - **Excess solar mode** — one switch flips the heat pump to a higher target temperature and aggressive heating mode when solar power is available, then reverts when switched off
 - **Diagnostic sensors** — compressor frequency, current & voltage, expansion valve position, runtime, run state
+- **Tank energy sensor** — calculated thermal energy stored in the tank (kWh)
 - **Binary sensors** — compressor, electric element, fan, circulation pump, solar pump, sterilisation, antifreeze
 - **Configuration entities** — baseline and solar temperature setpoints, baseline and solar heating mode profiles (shown in HA's device Configuration section)
 - **State persistence** — solar mode profile settings survive container restarts via a Docker named volume
@@ -80,6 +81,7 @@ services:
       GIZWITS_TOKEN:  "your_user_token_here"
       GIZWITS_APP_ID: "your_app_id_here"
       GIZWITS_DID:    "your_device_id_here"
+      TANK_VOLUME: "200"           # tank capacity in litres (200 or 300)
       DATA_DIR: "/data"
     volumes:
       - hot_water_data:/data

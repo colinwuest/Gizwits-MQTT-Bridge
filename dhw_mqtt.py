@@ -42,6 +42,11 @@ STATE_FILE     = os.path.join(DATA_DIR, "state.json")
 
 POLL_INTERVAL  = 120   # seconds between Gizwits polls
 
+# Tank parameters for energy calculations
+TANK_VOLUME    = int(os.getenv("TANK_VOLUME", "200"))   # litres
+COLD_WATER_REF = float(os.getenv("COLD_WATER_TEMP", "10"))  # °C reference for stored energy
+SPECIFIC_HEAT  = 4.186  # kJ/(kg·°C) for water
+
 GIZWITS_BASE   = "https://euapi.gizwits.com"
 DID            = os.getenv("GIZWITS_DID",    "")
 GIZWITS_HEADERS = {
@@ -78,6 +83,11 @@ NUMERIC_SENSORS = {
     "Data_ElectronicExpansionValve":      ("expansion_valve",          "Hot Water Expansion valve position", None,  None,        "mdi:valve"),
     "Data_CompressorAccumulativeRunTimeL": ("compressor_runtime",      "Hot Water Compressor runtime",       "min", None,        "mdi:timer"),
     "Data_RunState":                      ("run_state",                "Hot Water Run state",                None,  None,        "mdi:information-outline"),
+}
+
+# Calculated sensors (not from Gizwits — derived locally)
+CALCULATED_SENSORS = {
+    "tank_energy": ("tank_energy", "Hot Water Tank energy stored", "kWh", "energy", "mdi:water-boiler"),
 }
 
 # (Gizwits key) -> (mqtt_id, friendly_name, device_class, icon)
@@ -352,6 +362,12 @@ def publish_discovery(client: mqtt.Client) -> None:
                        json.dumps(_binary_sensor_config(mqtt_id, name, device_class, icon)),
                        retain=True)
 
+    for _, (mqtt_id, name, unit, device_class, icon) in CALCULATED_SENSORS.items():
+        topic = f"{DISC}/sensor/hot_water_{mqtt_id}/config"
+        client.publish(topic,
+                       json.dumps(_numeric_sensor_config(mqtt_id, name, unit, device_class, icon)),
+                       retain=True)
+
     log.info("MQTT Discovery configs published")
 
 
@@ -423,6 +439,18 @@ def publish_states(client: mqtt.Client, attrs: dict) -> None:
         if gizwits_key in attrs:
             client.publish(f"{PREFIX}/binary_sensor/{mqtt_id}/state",
                            "ON" if attrs[gizwits_key] else "OFF", retain=True)
+
+    # ── Calculated sensors ────────────────────────────────────────────────
+    upper = attrs.get("Data_UpTankTemp")
+    lower = attrs.get("Data_DownTankTemp")
+    if upper is not None and lower is not None:
+        avg_temp = (upper + lower) / 2.0
+        # Thermal energy stored in the tank relative to cold-water reference
+        # Q = m × c × ΔT  (litres ≈ kg for water)
+        energy_kj = TANK_VOLUME * SPECIFIC_HEAT * (avg_temp - COLD_WATER_REF)
+        energy_kwh = round(energy_kj / 3600.0, 2)
+        client.publish(f"{PREFIX}/sensor/tank_energy/state",
+                       str(energy_kwh), retain=True)
 
 
 # ── Gizwits API ───────────────────────────────────────────────────────────────

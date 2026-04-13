@@ -11,6 +11,7 @@ services:
       GIZWITS_TOKEN: "newtoken"    # update here if token expires
       GIZWITS_APP_ID: "appid"
       GIZWITS_DID: "deviceid"
+      TANK_VOLUME: "200"           # tank capacity in litres
       DATA_DIR: "/data"
     volumes:
       - hot_water_data:/data
