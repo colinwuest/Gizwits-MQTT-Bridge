@@ -531,7 +531,7 @@ def on_message(client, userdata, msg):
     # ── Baseline temperature slider ───────────────────────────────────────────
     elif msg.topic == f"{PREFIX}/number/{BASELINE_TEMP_ID}/set":
         value = _parse_temp(payload)
-        if value is None:
+        if value is None or value == _state["baseline_temp"]:
             return
         _state["baseline_temp"] = value
         client.publish(f"{PREFIX}/number/{BASELINE_TEMP_ID}/state",
@@ -544,7 +544,7 @@ def on_message(client, userdata, msg):
     # ── Solar temperature slider ──────────────────────────────────────────────
     elif msg.topic == f"{PREFIX}/number/{SOLAR_TEMP_ID}/set":
         value = _parse_temp(payload)
-        if value is None:
+        if value is None or value == _state["solar_temp"]:
             return
         _state["solar_temp"] = value
         client.publish(f"{PREFIX}/number/{SOLAR_TEMP_ID}/state",
@@ -557,6 +557,8 @@ def on_message(client, userdata, msg):
     # ── Solar mode switch ─────────────────────────────────────────────────────
     elif msg.topic == f"{PREFIX}/switch/{SOLAR_SWITCH_ID}/set":
         new_mode = payload.upper() == "ON"
+        if new_mode == _state["solar_mode"]:
+            return
         _state["solar_mode"] = new_mode
         client.publish(f"{PREFIX}/switch/{SOLAR_SWITCH_ID}/state",
                        "ON" if new_mode else "OFF", retain=True)
@@ -588,6 +590,8 @@ def on_message(client, userdata, msg):
         if payload not in MODE_MAP:
             log.error("Unknown mode: %r. Valid options: %s", payload, list(MODE_MAP))
             return
+        if payload == _state["baseline_mode"]:
+            return
         _state["baseline_mode"] = payload
         client.publish(f"{PREFIX}/select/{BASELINE_MODE_ID}/state", payload, retain=True)
         log.info("Baseline heating mode updated: %s", payload)
@@ -599,6 +603,8 @@ def on_message(client, userdata, msg):
     elif msg.topic == f"{PREFIX}/select/{SOLAR_MODE_ID}/set":
         if payload not in MODE_MAP:
             log.error("Unknown mode: %r. Valid options: %s", payload, list(MODE_MAP))
+            return
+        if payload == _state["solar_mode_heat"]:
             return
         _state["solar_mode_heat"] = payload
         client.publish(f"{PREFIX}/select/{SOLAR_MODE_ID}/state", payload, retain=True)
