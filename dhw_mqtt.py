@@ -87,7 +87,9 @@ NUMERIC_SENSORS = {
 
 # Calculated sensors (not from Gizwits — derived locally)
 CALCULATED_SENSORS = {
-    "tank_energy": ("tank_energy", "Hot Water Tank energy stored", "kWh", "energy", "mdi:water-boiler"),
+    "tank_energy":          ("tank_energy",          "Hot Water Tank energy stored",   "kWh", "energy", "mdi:water-boiler"),
+    "heat_generated_today": ("heat_generated_today", "Hot Water Heat generated today", "kWh", "energy", "mdi:heat-wave"),
+    "heat_used_today":      ("heat_used_today",      "Hot Water Heat used today",      "kWh", "energy", "mdi:shower"),
 }
 
 # (Gizwits key) -> (mqtt_id, friendly_name, device_class, icon)
@@ -150,7 +152,11 @@ _state = {
     "baseline_temp": BASELINE_TEMP_DEFAULT,
     "solar_temp":    SOLAR_TEMP_DEFAULT,
     "baseline_mode": BASELINE_MODE_DEFAULT,
-    "solar_mode_heat": SOLAR_MODE_DEFAULT,
+    "solar_mode_heat":      SOLAR_MODE_DEFAULT,
+    "daily_heat_generated": 0.0,   # kWh added to tank today
+    "daily_heat_used":      0.0,   # kWh removed from tank today
+    "daily_stats_date":     "",    # YYYY-MM-DD of current counters
+    "last_energy_kwh":      None,  # previous tank energy reading
 }
 
 
@@ -162,7 +168,10 @@ def _load_state() -> None:
         _state["baseline_temp"] = int(saved.get("baseline_temp", BASELINE_TEMP_DEFAULT))
         _state["solar_temp"]    = int(saved.get("solar_temp",    SOLAR_TEMP_DEFAULT))
         _state["baseline_mode"] = saved.get("baseline_mode", BASELINE_MODE_DEFAULT)
-        _state["solar_mode_heat"] = saved.get("solar_mode_heat", SOLAR_MODE_DEFAULT)
+        _state["solar_mode_heat"]      = saved.get("solar_mode_heat", SOLAR_MODE_DEFAULT)
+        _state["daily_heat_generated"] = float(saved.get("daily_heat_generated", 0.0))
+        _state["daily_heat_used"]      = float(saved.get("daily_heat_used",      0.0))
+        _state["daily_stats_date"]     = saved.get("daily_stats_date", "")
         log.info("State loaded from %s: %s", STATE_FILE, saved)
     except FileNotFoundError:
         log.info("No state file found at %s — using defaults", STATE_FILE)
@@ -176,10 +185,13 @@ def _save_state() -> None:
         os.makedirs(DATA_DIR, exist_ok=True)
         with open(STATE_FILE, "w") as f:
             json.dump({
-                "baseline_temp": _state["baseline_temp"],
-                "solar_temp":    _state["solar_temp"],
-                "baseline_mode": _state["baseline_mode"],
-                "solar_mode_heat": _state["solar_mode_heat"],
+                "baseline_temp":        _state["baseline_temp"],
+                "solar_temp":           _state["solar_temp"],
+                "baseline_mode":        _state["baseline_mode"],
+                "solar_mode_heat":      _state["solar_mode_heat"],
+                "daily_heat_generated": _state["daily_heat_generated"],
+                "daily_heat_used":      _state["daily_heat_used"],
+                "daily_stats_date":     _state["daily_stats_date"],
             }, f, indent=2)
     except Exception as exc:
         log.warning("Could not save state file: %s", exc)
@@ -451,6 +463,34 @@ def publish_states(client: mqtt.Client, attrs: dict) -> None:
         energy_kwh = round(energy_kj / 3600.0, 2)
         client.publish(f"{PREFIX}/sensor/tank_energy/state",
                        str(energy_kwh), retain=True)
+
+        # ── Daily energy counters ─────────────────────────────────────────
+        today = time.strftime("%Y-%m-%d")
+        if _state["daily_stats_date"] != today:
+            log.info("Daily heat counters reset for %s (was %s) — generated=%.2f kWh, used=%.2f kWh",
+                     today, _state["daily_stats_date"] or "(none)",
+                     _state["daily_heat_generated"], _state["daily_heat_used"])
+            _state["daily_stats_date"]     = today
+            _state["daily_heat_generated"] = 0.0
+            _state["daily_heat_used"]      = 0.0
+            _state["last_energy_kwh"]      = None
+
+        if _state["last_energy_kwh"] is not None:
+            delta = round(energy_kwh - _state["last_energy_kwh"], 3)
+            if delta > 0:
+                _state["daily_heat_generated"] = round(_state["daily_heat_generated"] + delta, 2)
+                log.debug("Tank energy up %.3f kWh → generated today: %.2f kWh", delta, _state["daily_heat_generated"])
+            elif delta < 0:
+                _state["daily_heat_used"] = round(_state["daily_heat_used"] - delta, 2)
+                log.debug("Tank energy down %.3f kWh → used today: %.2f kWh", abs(delta), _state["daily_heat_used"])
+
+        _state["last_energy_kwh"] = energy_kwh
+        _save_state()
+
+        client.publish(f"{PREFIX}/sensor/heat_generated_today/state",
+                       str(round(_state["daily_heat_generated"], 2)), retain=True)
+        client.publish(f"{PREFIX}/sensor/heat_used_today/state",
+                       str(round(_state["daily_heat_used"], 2)), retain=True)
 
 
 # ── Gizwits API ───────────────────────────────────────────────────────────────
