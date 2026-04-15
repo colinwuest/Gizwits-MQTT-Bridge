@@ -476,11 +476,18 @@ def set_setpoint(value: int) -> None:
 
 
 # ── MQTT callbacks ────────────────────────────────────────────────────────────
+_connect_count = 0
+
 def on_connect(client, userdata, flags, reason_code, properties=None):
+    global _connect_count
     # reason_code is an object in paho 2.x; int in 1.x
     rc = reason_code if isinstance(reason_code, int) else reason_code.value
+    _connect_count += 1
     if rc == 0:
-        log.info("MQTT connected to %s:%d", MQTT_HOST, MQTT_PORT)
+        if _connect_count == 1:
+            log.info("MQTT connected to %s:%d", MQTT_HOST, MQTT_PORT)
+        else:
+            log.warning("MQTT reconnected to %s:%d (connect #%d)", MQTT_HOST, MQTT_PORT, _connect_count)
         publish_discovery(client)
         topics = [
             f"{PREFIX}/number/{SETPOINT_ID}/set",
@@ -518,6 +525,7 @@ def on_message(client, userdata, msg):
 
     # ── Direct setpoint override ──────────────────────────────────────────────
     if msg.topic == f"{PREFIX}/number/{SETPOINT_ID}/set":
+        log.info("Received setpoint command: %s", payload)
         value = _parse_temp(payload)
         if value is None:
             return
@@ -530,8 +538,12 @@ def on_message(client, userdata, msg):
 
     # ── Baseline temperature slider ───────────────────────────────────────────
     elif msg.topic == f"{PREFIX}/number/{BASELINE_TEMP_ID}/set":
+        log.info("Received baseline temp command: %s (current: %d)", payload, _state["baseline_temp"])
         value = _parse_temp(payload)
-        if value is None or value == _state["baseline_temp"]:
+        if value is None:
+            return
+        if value == _state["baseline_temp"]:
+            log.debug("Baseline temp unchanged at %d — skipping", value)
             return
         _state["baseline_temp"] = value
         client.publish(f"{PREFIX}/number/{BASELINE_TEMP_ID}/state",
@@ -543,8 +555,12 @@ def on_message(client, userdata, msg):
 
     # ── Solar temperature slider ──────────────────────────────────────────────
     elif msg.topic == f"{PREFIX}/number/{SOLAR_TEMP_ID}/set":
+        log.info("Received solar temp command: %s (current: %d)", payload, _state["solar_temp"])
         value = _parse_temp(payload)
-        if value is None or value == _state["solar_temp"]:
+        if value is None:
+            return
+        if value == _state["solar_temp"]:
+            log.debug("Solar temp unchanged at %d — skipping", value)
             return
         _state["solar_temp"] = value
         client.publish(f"{PREFIX}/number/{SOLAR_TEMP_ID}/state",
@@ -557,7 +573,9 @@ def on_message(client, userdata, msg):
     # ── Solar mode switch ─────────────────────────────────────────────────────
     elif msg.topic == f"{PREFIX}/switch/{SOLAR_SWITCH_ID}/set":
         new_mode = payload.upper() == "ON"
+        log.info("Received solar switch command: %s (current: %s)", payload, _state["solar_mode"])
         if new_mode == _state["solar_mode"]:
+            log.debug("Solar mode unchanged at %s — skipping", new_mode)
             return
         _state["solar_mode"] = new_mode
         client.publish(f"{PREFIX}/switch/{SOLAR_SWITCH_ID}/state",
@@ -587,10 +605,12 @@ def on_message(client, userdata, msg):
 
     # ── Baseline heating mode select ──────────────────────────────────────────
     elif msg.topic == f"{PREFIX}/select/{BASELINE_MODE_ID}/set":
+        log.info("Received baseline mode command: %s (current: %s)", payload, _state["baseline_mode"])
         if payload not in MODE_MAP:
             log.error("Unknown mode: %r. Valid options: %s", payload, list(MODE_MAP))
             return
         if payload == _state["baseline_mode"]:
+            log.debug("Baseline mode unchanged at %s — skipping", payload)
             return
         _state["baseline_mode"] = payload
         client.publish(f"{PREFIX}/select/{BASELINE_MODE_ID}/state", payload, retain=True)
@@ -601,10 +621,12 @@ def on_message(client, userdata, msg):
 
     # ── Solar heating mode select ─────────────────────────────────────────────
     elif msg.topic == f"{PREFIX}/select/{SOLAR_MODE_ID}/set":
+        log.info("Received solar heat mode command: %s (current: %s)", payload, _state["solar_mode_heat"])
         if payload not in MODE_MAP:
             log.error("Unknown mode: %r. Valid options: %s", payload, list(MODE_MAP))
             return
         if payload == _state["solar_mode_heat"]:
+            log.debug("Solar heat mode unchanged at %s — skipping", payload)
             return
         _state["solar_mode_heat"] = payload
         client.publish(f"{PREFIX}/select/{SOLAR_MODE_ID}/state", payload, retain=True)
@@ -616,7 +638,9 @@ def on_message(client, userdata, msg):
 
 def on_disconnect(client, userdata, reason_code, properties=None):
     rc = reason_code if isinstance(reason_code, int) else reason_code.value
-    if rc != 0:
+    if rc == 0:
+        log.info("MQTT disconnected cleanly")
+    else:
         log.warning("MQTT disconnected unexpectedly (rc=%d) — will reconnect", rc)
 
 
@@ -646,7 +670,7 @@ def main() -> None:
     if MQTT_USER:
         client.username_pw_set(MQTT_USER, MQTT_PASS)
 
-    client.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
+    client.connect(MQTT_HOST, MQTT_PORT, keepalive=300)
     client.loop_start()   # handles reconnects in background thread
 
     # Graceful shutdown
