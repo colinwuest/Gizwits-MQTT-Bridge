@@ -13,10 +13,10 @@ The service polls the Gizwits cloud API every 120 seconds and publishes all sens
 - **Heating mode select** — Auto, Eco, Fast Heat, Sleep, Holiday
 - **Excess solar mode** — one switch flips the heat pump to a higher target temperature and aggressive heating mode when solar power is available, then reverts when switched off
 - **Diagnostic sensors** — compressor frequency, current & voltage, expansion valve position, runtime, run state
-- **Tank energy sensor** — calculated thermal energy stored in the tank (kWh)
+- **Energy sensors** — tank energy stored (kWh), heat generated today, heat used today, and lifetime totals for both
 - **Binary sensors** — compressor, electric element, fan, circulation pump, solar pump, sterilisation, antifreeze
 - **Configuration entities** — baseline and solar temperature setpoints, baseline and solar heating mode profiles (shown in HA's device Configuration section)
-- **State persistence** — solar mode profile settings survive container restarts via a Docker named volume
+- **State persistence** — solar mode profile settings and energy counters survive container restarts via a Docker named volume
 
 ---
 
@@ -131,6 +131,8 @@ Home Assistant will auto-discover the device under **Settings → Devices & Serv
 | `GIZWITS_APP_ID` | *(required)* | Gizwits application ID |
 | `GIZWITS_DID` | *(required)* | Gizwits device ID |
 | `DATA_DIR` | `/data` | Path for state persistence (mount a volume here) |
+| `TANK_VOLUME` | `200` | Tank capacity in litres — used for energy calculations |
+| `COLD_WATER_TEMP` | `10` | Cold water reference temperature in °C for stored energy baseline |
 
 ---
 
@@ -156,6 +158,17 @@ Ambient, upper tank, lower tank, coil, suction, exhaust, solar probe, reserved
 
 ### Diagnostic Sensors
 Compressor frequency (Hz), compressor current (A), compressor voltage (V), electric heating current (A), expansion valve position, compressor runtime (min), run state
+
+### Energy Sensors
+| Entity | Description |
+|---|---|
+| Hot Water Tank energy stored | Thermal energy in the tank relative to cold-water reference (kWh) |
+| Hot Water Heat generated today | Energy added to the tank since midnight — heat pump, element, solar (kWh) |
+| Hot Water Heat used today | Energy drawn from the tank since midnight — showers, taps, losses (kWh) |
+| Hot Water Heat generated (lifetime) | Cumulative energy added to the tank since first run (kWh, `total_increasing`) |
+| Hot Water Heat used (lifetime) | Cumulative energy drawn from the tank since first run (kWh, `total_increasing`) |
+
+Daily counters reset at midnight. All counters survive container restarts via the Docker volume. Lifetime totals never reset and can be added to HA's Energy Dashboard.
 
 ### Binary Sensors
 Compressor running, electric heating active, fan running, circulation pump running, solar pump running, sterilisation active, antifreeze active, power state

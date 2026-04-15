@@ -86,10 +86,13 @@ NUMERIC_SENSORS = {
 }
 
 # Calculated sensors (not from Gizwits — derived locally)
+# Tuple: (mqtt_id, friendly_name, unit, device_class, icon, state_class)
 CALCULATED_SENSORS = {
-    "tank_energy":          ("tank_energy",          "Hot Water Tank energy stored",   "kWh", "energy", "mdi:water-boiler"),
-    "heat_generated_today": ("heat_generated_today", "Hot Water Heat generated today", "kWh", "energy", "mdi:heat-wave"),
-    "heat_used_today":      ("heat_used_today",      "Hot Water Heat used today",      "kWh", "energy", "mdi:shower"),
+    "tank_energy":          ("tank_energy",          "Hot Water Tank energy stored",        "kWh", "energy", "mdi:water-boiler",  "measurement"),
+    "heat_generated_today": ("heat_generated_today", "Hot Water Heat generated today",      "kWh", "energy", "mdi:heat-wave",     "measurement"),
+    "heat_used_today":      ("heat_used_today",      "Hot Water Heat used today",           "kWh", "energy", "mdi:shower",        "measurement"),
+    "total_heat_generated": ("total_heat_generated", "Hot Water Heat generated (lifetime)", "kWh", "energy", "mdi:heat-wave",     "total_increasing"),
+    "total_heat_used":      ("total_heat_used",      "Hot Water Heat used (lifetime)",      "kWh", "energy", "mdi:shower-head",   "total_increasing"),
 }
 
 # (Gizwits key) -> (mqtt_id, friendly_name, device_class, icon)
@@ -157,6 +160,8 @@ _state = {
     "daily_heat_used":      0.0,   # kWh removed from tank today
     "daily_stats_date":     "",    # YYYY-MM-DD of current counters
     "last_energy_kwh":      None,  # previous tank energy reading
+    "total_heat_generated": 0.0,   # kWh added to tank all-time
+    "total_heat_used":      0.0,   # kWh removed from tank all-time
 }
 
 
@@ -172,6 +177,8 @@ def _load_state() -> None:
         _state["daily_heat_generated"] = float(saved.get("daily_heat_generated", 0.0))
         _state["daily_heat_used"]      = float(saved.get("daily_heat_used",      0.0))
         _state["daily_stats_date"]     = saved.get("daily_stats_date", "")
+        _state["total_heat_generated"] = float(saved.get("total_heat_generated", 0.0))
+        _state["total_heat_used"]      = float(saved.get("total_heat_used",      0.0))
         log.info("State loaded from %s: %s", STATE_FILE, saved)
     except FileNotFoundError:
         log.info("No state file found at %s — using defaults", STATE_FILE)
@@ -192,6 +199,8 @@ def _save_state() -> None:
                 "daily_heat_generated": _state["daily_heat_generated"],
                 "daily_heat_used":      _state["daily_heat_used"],
                 "daily_stats_date":     _state["daily_stats_date"],
+                "total_heat_generated": _state["total_heat_generated"],
+                "total_heat_used":      _state["total_heat_used"],
             }, f, indent=2)
     except Exception as exc:
         log.warning("Could not save state file: %s", exc)
@@ -294,12 +303,13 @@ def _mode_select_config(entity_id: str, name: str) -> dict:
 
 
 def _numeric_sensor_config(mqtt_id: str, name: str, unit: Optional[str],
-                           device_class: Optional[str], icon: Optional[str]) -> dict:
+                           device_class: Optional[str], icon: Optional[str],
+                           state_class: str = "measurement") -> dict:
     cfg = {
         "name":        name,
         "unique_id":   f"hot_water_{mqtt_id}",
         "state_topic": f"{PREFIX}/sensor/{mqtt_id}/state",
-        "state_class": "measurement",
+        "state_class": state_class,
         "device":      DEVICE_INFO,
     }
     if unit:
@@ -374,10 +384,10 @@ def publish_discovery(client: mqtt.Client) -> None:
                        json.dumps(_binary_sensor_config(mqtt_id, name, device_class, icon)),
                        retain=True)
 
-    for _, (mqtt_id, name, unit, device_class, icon) in CALCULATED_SENSORS.items():
+    for _, (mqtt_id, name, unit, device_class, icon, state_class) in CALCULATED_SENSORS.items():
         topic = f"{DISC}/sensor/hot_water_{mqtt_id}/config"
         client.publish(topic,
-                       json.dumps(_numeric_sensor_config(mqtt_id, name, unit, device_class, icon)),
+                       json.dumps(_numeric_sensor_config(mqtt_id, name, unit, device_class, icon, state_class)),
                        retain=True)
 
     log.info("MQTT Discovery configs published")
@@ -479,10 +489,14 @@ def publish_states(client: mqtt.Client, attrs: dict) -> None:
             delta = round(energy_kwh - _state["last_energy_kwh"], 3)
             if delta > 0:
                 _state["daily_heat_generated"] = round(_state["daily_heat_generated"] + delta, 2)
-                log.debug("Tank energy up %.3f kWh → generated today: %.2f kWh", delta, _state["daily_heat_generated"])
+                _state["total_heat_generated"] = round(_state["total_heat_generated"] + delta, 2)
+                log.debug("Tank energy up %.3f kWh → generated today: %.2f kWh  lifetime: %.2f kWh",
+                          delta, _state["daily_heat_generated"], _state["total_heat_generated"])
             elif delta < 0:
                 _state["daily_heat_used"] = round(_state["daily_heat_used"] - delta, 2)
-                log.debug("Tank energy down %.3f kWh → used today: %.2f kWh", abs(delta), _state["daily_heat_used"])
+                _state["total_heat_used"] = round(_state["total_heat_used"] - delta, 2)
+                log.debug("Tank energy down %.3f kWh → used today: %.2f kWh  lifetime: %.2f kWh",
+                          abs(delta), _state["daily_heat_used"], _state["total_heat_used"])
 
         _state["last_energy_kwh"] = energy_kwh
         _save_state()
@@ -491,6 +505,10 @@ def publish_states(client: mqtt.Client, attrs: dict) -> None:
                        str(round(_state["daily_heat_generated"], 2)), retain=True)
         client.publish(f"{PREFIX}/sensor/heat_used_today/state",
                        str(round(_state["daily_heat_used"], 2)), retain=True)
+        client.publish(f"{PREFIX}/sensor/total_heat_generated/state",
+                       str(round(_state["total_heat_generated"], 2)), retain=True)
+        client.publish(f"{PREFIX}/sensor/total_heat_used/state",
+                       str(round(_state["total_heat_used"], 2)), retain=True)
 
 
 # ── Gizwits API ───────────────────────────────────────────────────────────────
