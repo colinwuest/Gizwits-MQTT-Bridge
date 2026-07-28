@@ -49,6 +49,9 @@ SPECIFIC_HEAT  = 4.186  # kJ/(kg·°C) for water
 
 GIZWITS_BASE   = "https://euapi.gizwits.com"
 DID            = os.getenv("GIZWITS_DID",    "")
+# Product key for this model — used by GET /app/datapoint?product_key=... which
+# returns the full device schema (attribute list, scaling, value semantics).
+PRODUCT_KEY    = os.getenv("GIZWITS_PRODUCT_KEY", "7e734854fa414137b096163dcf648b07")
 GIZWITS_HEADERS = {
     "x-gizwits-application-id": os.getenv("GIZWITS_APP_ID",
                                             ""),
@@ -81,8 +84,48 @@ NUMERIC_SENSORS = {
     "Data_CompressorVolt":                ("compressor_voltage",       "Hot Water Compressor voltage",       "V",   "voltage",   None),
     "Data_ElectricHeatingCurrent":        ("electric_heating_current", "Hot Water Electric heating current", "A",   "current",   None),
     "Data_ElectronicExpansionValve":      ("expansion_valve",          "Hot Water Expansion valve position", None,  None,        "mdi:valve"),
-    "Data_CompressorAccumulativeRunTimeL": ("compressor_runtime",      "Hot Water Compressor runtime",       "min", None,        "mdi:timer"),
-    "Data_RunState":                      ("run_state",                "Hot Water Run state",                None,  None,        "mdi:information-outline"),
+    "Data_HotWater":                      ("hot_water_level",          "Hot Water Available hot water",      None,  None,        "mdi:water-thermometer"),
+}
+
+# Run state values (from device schema Data_RunState desc)
+RUN_STATE_MAP  = {0: "Off", 1: "Standby", 2: "Heating", 3: "Fault"}
+RUN_STATE_ID   = "run_state"
+RUN_STATE_NAME = "Hot Water Run state"
+
+# Fault flags from the device schema — value 1 means the fault is active.
+ERROR_FLAGS = {
+    "Err_LowPressure":            "Low pressure",
+    "Err_HighPressure":           "High pressure",
+    "Err_CompressorCurrentOver":  "Compressor overcurrent",
+    "Err_ExhaustOver":            "Exhaust temperature too high",
+    "Err_DcDusbarUnderVoltage":   "DC bus undervoltage",
+    "Err_DcDusbarOverVoltage":    "DC bus overvoltage",
+    "Err_AcCurrent":              "AC current protection",
+    "Err_AcInputVoltage":         "AC input voltage fault",
+    "Err_Ipm":                    "IPM fault",
+    "Err_IpmTemp":                "IPM/heatsink temperature sensor fault",
+    "Err_IpmTempOver":            "IPM/heatsink overtemperature",
+    "Err_Pfc":                    "PFC fault",
+    "Err_PfcTemp":                "PFC temperature sensor fault",
+    "Err_PfcTempOver":            "PFC overtemperature",
+    "Err_BootFailed":             "Start-up failed",
+    "Err_PhaseLose":              "Phase loss",
+    "Err_CurrentDetect":          "Current detection circuit fault",
+    "Err_OutOfStep":              "Compressor out of step",
+    "Err_DriverCommunication":    "Driver communication fault",
+    "Err_MainBoardCommunication": "Mainboard/controller communication fault",
+    "Err_DcFan":                  "DC fan fault",
+}
+FAULT_BINARY_ID   = "fault"
+FAULT_BINARY_NAME = "Hot Water Fault"
+FAULT_TEXT_ID     = "active_faults"
+FAULT_TEXT_NAME   = "Hot Water Active faults"
+
+# Plain text sensors (no state_class — these carry strings, not numbers)
+# mqtt_id -> (friendly_name, icon)
+TEXT_SENSORS = {
+    RUN_STATE_ID:  (RUN_STATE_NAME,  "mdi:information-outline"),
+    FAULT_TEXT_ID: (FAULT_TEXT_NAME, "mdi:alert-circle-outline"),
 }
 
 # Calculated sensors (not from Gizwits — derived locally)
@@ -93,6 +136,7 @@ CALCULATED_SENSORS = {
     "heat_used_today":      ("heat_used_today",      "Hot Water Heat used today",           "kWh", "energy", "mdi:shower",        "measurement"),
     "total_heat_generated": ("total_heat_generated", "Hot Water Heat generated (lifetime)", "kWh", "energy", "mdi:heat-wave",     "total_increasing"),
     "total_heat_used":      ("total_heat_used",      "Hot Water Heat used (lifetime)",      "kWh", "energy", "mdi:shower-head",   "total_increasing"),
+    "compressor_runtime":   ("compressor_runtime",   "Hot Water Compressor runtime",        "min", "duration", "mdi:timer",       "total_increasing"),
 }
 
 # (Gizwits key) -> (mqtt_id, friendly_name, device_class, icon)
@@ -102,8 +146,13 @@ BINARY_SENSORS = {
     "Out_OutsideFan":           ("fan_running",          "Hot Water Fan",              "running", "mdi:fan"),
     "Out_WaterCirculatingPump": ("circulation_pump",     "Hot Water Circulation pump", "running", "mdi:pump"),
     "Out_SunWaterPump":         ("solar_pump",           "Hot Water Solar pump",       "running", "mdi:solar-power"),
+    "Out_FourWayValve":         ("four_way_valve",       "Hot Water Four-way valve",   "opening", "mdi:valve"),
+    "Out_ElectricMagnesiumBar": ("magnesium_bar",        "Hot Water Electronic anode", "running", "mdi:shield-check"),
+    "Out_Boiler":               ("boiler_output",        "Hot Water Boiler output",    "running", "mdi:water-boiler"),
     "State_Sterilization":      ("sterilisation",        "Hot Water Sterilisation",    "running", "mdi:bacteria"),
     "State_Antifreeze":         ("antifreeze",           "Hot Water Antifreeze",       "cold",    "mdi:snowflake"),
+    "State_Frost":              ("defrosting",           "Hot Water Defrosting",       "running", "mdi:snowflake-melt"),
+    "State_HolidayStart":       ("holiday_active",       "Hot Water Holiday mode",     None,      "mdi:beach"),
     "Cmd_Power":                ("power_state",          "Hot Water Power",            "power",   None),
 }
 
@@ -338,6 +387,19 @@ def _binary_sensor_config(mqtt_id: str, name: str, device_class: Optional[str],
     return cfg
 
 
+def _text_sensor_config(mqtt_id: str, name: str, icon: Optional[str]) -> dict:
+    """Config for a sensor carrying a string value (no state_class/unit)."""
+    cfg = {
+        "name":        name,
+        "unique_id":   f"hot_water_{mqtt_id}",
+        "state_topic": f"{PREFIX}/sensor/{mqtt_id}/state",
+        "device":      DEVICE_INFO,
+    }
+    if icon:
+        cfg["icon"] = icon
+    return cfg
+
+
 def publish_discovery(client: mqtt.Client) -> None:
     """Publish retained MQTT Discovery configs — HA creates entities on receipt."""
     for _, (mqtt_id, friendly_name) in SENSORS.items():
@@ -389,6 +451,17 @@ def publish_discovery(client: mqtt.Client) -> None:
         client.publish(topic,
                        json.dumps(_numeric_sensor_config(mqtt_id, name, unit, device_class, icon, state_class)),
                        retain=True)
+
+    for mqtt_id, (name, icon) in TEXT_SENSORS.items():
+        topic = f"{DISC}/sensor/hot_water_{mqtt_id}/config"
+        client.publish(topic,
+                       json.dumps(_text_sensor_config(mqtt_id, name, icon)),
+                       retain=True)
+
+    client.publish(f"{DISC}/binary_sensor/hot_water_{FAULT_BINARY_ID}/config",
+                   json.dumps(_binary_sensor_config(FAULT_BINARY_ID, FAULT_BINARY_NAME,
+                                                    "problem", "mdi:alert")),
+                   retain=True)
 
     log.info("MQTT Discovery configs published")
 
@@ -462,6 +535,31 @@ def publish_states(client: mqtt.Client, attrs: dict) -> None:
             client.publish(f"{PREFIX}/binary_sensor/{mqtt_id}/state",
                            "ON" if attrs[gizwits_key] else "OFF", retain=True)
 
+    # ── Run state — schema: 0=off, 1=standby (keep warm), 2=heating, 3=fault ─
+    if "Data_RunState" in attrs:
+        raw_state = attrs["Data_RunState"]
+        client.publish(f"{PREFIX}/sensor/{RUN_STATE_ID}/state",
+                       RUN_STATE_MAP.get(raw_state, f"Unknown ({raw_state})"),
+                       retain=True)
+
+    # ── Compressor runtime — 32-bit counter split across two 16-bit registers ─
+    if "Data_CompressorAccumulativeRunTimeL" in attrs:
+        runtime_min = ((attrs.get("Data_CompressorAccumulativeRunTimeH", 0) << 16)
+                       + attrs["Data_CompressorAccumulativeRunTimeL"])
+        client.publish(f"{PREFIX}/sensor/compressor_runtime/state",
+                       str(runtime_min), retain=True)
+
+    # ── Fault flags ────────────────────────────────────────────────
+    active_faults = [label for key, label in ERROR_FLAGS.items() if attrs.get(key)]
+    client.publish(f"{PREFIX}/binary_sensor/{FAULT_BINARY_ID}/state",
+                   "ON" if active_faults else "OFF", retain=True)
+    # HA caps state strings at 255 characters
+    fault_text = ", ".join(active_faults) if active_faults else "None"
+    client.publish(f"{PREFIX}/sensor/{FAULT_TEXT_ID}/state",
+                   fault_text[:255], retain=True)
+    if active_faults:
+        log.warning("Device reporting fault(s): %s", ", ".join(active_faults))
+
     # ── Calculated sensors ────────────────────────────────────────────────
     upper = attrs.get("Data_UpTankTemp")
     lower = attrs.get("Data_DownTankTemp")
@@ -518,6 +616,10 @@ def fetch_attrs() -> dict:
         headers=GIZWITS_HEADERS,
         timeout=10,
     )
+    if resp.status_code in (400, 401, 403):
+        log.error("Gizwits rejected the request (HTTP %d) — GIZWITS_TOKEN has most "
+                  "likely expired. Re-capture the user token from the app.",
+                  resp.status_code)
     resp.raise_for_status()
     return resp.json().get("attr", {})
 

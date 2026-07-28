@@ -3,6 +3,9 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+# HTTP captures — these contain live Gizwits user tokens
+*.har
+
 # C extensions
 *.so
 

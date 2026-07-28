@@ -12,9 +12,11 @@ The service polls the Gizwits cloud API every 120 seconds and publishes all sens
 - **Target temperature control** — number entity with slider (0–75 °C)
 - **Heating mode select** — Auto, Eco, Fast Heat, Sleep, Holiday
 - **Excess solar mode** — one switch flips the heat pump to a higher target temperature and aggressive heating mode when solar power is available, then reverts when switched off
-- **Diagnostic sensors** — compressor frequency, current & voltage, expansion valve position, runtime, run state
+- **Diagnostic sensors** — compressor frequency, current & voltage, expansion valve position, runtime, available hot water level
+- **Run state** — decoded to `Off` / `Standby` / `Heating` / `Fault`
+- **Fault reporting** — a `problem` binary sensor plus a text sensor listing every active fault (21 fault flags decoded: high/low pressure, IPM, PFC, phase loss, fan, communication, etc.)
 - **Energy sensors** — tank energy stored (kWh), heat generated today, heat used today, and lifetime totals for both
-- **Binary sensors** — compressor, electric element, fan, circulation pump, solar pump, sterilisation, antifreeze
+- **Binary sensors** — compressor, electric element, fan, circulation pump, solar pump, four-way valve, electronic anode, boiler output, sterilisation, antifreeze, defrost, holiday mode
 - **Configuration entities** — baseline and solar temperature setpoints, baseline and solar heating mode profiles (shown in HA's device Configuration section)
 - **State persistence** — solar mode profile settings and energy counters survive container restarts via a Docker named volume
 
@@ -57,7 +59,22 @@ The vendor app communicates with `euapi.gizwits.com`. You need three values:
                                                    ^^^^^^^^^^^^^^^^^^^^^^
    ```
 
-> **Token expiry** — Gizwits user tokens can expire. If the service stops receiving data, re-capture the token from the app and update it in `docker-compose.yml`.
+> **Token expiry** — Gizwits user tokens can expire. If the service stops receiving data, re-capture the token from the app and update it in `docker-compose.yml`. An expired token makes the API return **HTTP 400**; the bridge logs an explicit hint when it sees a 400/401/403.
+
+### Device schema reference
+
+The app also calls `GET /app/datapoint?product_key=<PRODUCT_KEY>`, which returns the full
+device schema — every attribute with its data type, scaling (`ratio`/`addition`) and value
+semantics. This is what the run-state and fault mappings in this bridge are derived from:
+
+```bash
+curl -H "X-Gizwits-Application-Id: $APP_ID" \
+     -H "X-Gizwits-User-token: $TOKEN" \
+     "https://euapi.gizwits.com/app/datapoint?product_key=$PRODUCT_KEY"
+```
+
+The product key defaults to the `W-HTR-A8CF` value and can be overridden with the
+`GIZWITS_PRODUCT_KEY` environment variable.
 
 ---
 
